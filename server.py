@@ -2,11 +2,15 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# 🔐 Base de données simple (tu peux remplacer par SQL plus tard)
 licenses = {
     "ABC123456789": {"hwid": None, "active": True},
     "TESTKEY999999": {"hwid": None, "active": True}
 }
+
+# 👇 AJOUTE ÇA ICI
+@app.route("/")
+def home():
+    return "Server OK"
 
 @app.route("/check", methods=["POST"])
 def check():
@@ -19,15 +23,12 @@ def check():
 
     lic = licenses[key]
 
-    # 🔒 Première activation
     if lic["hwid"] is None:
         lic["hwid"] = hwid
 
-    # 🔒 Vérification HWID
     if lic["hwid"] != hwid:
         return jsonify({"valid": False})
 
-    # 🔒 Vérification active
     if not lic["active"]:
         return jsonify({"valid": False})
 
