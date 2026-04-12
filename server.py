@@ -18,20 +18,29 @@ def check():
     key = data.get("key")
     hwid = data.get("hwid")
 
+    print("---- REQUETE RECUE ----")
+    print("KEY :", key)
+    print("HWID :", hwid)
+
     if key not in licenses:
+        print("❌ INVALID KEY")
         return jsonify({"valid": False})
 
     lic = licenses[key]
 
     if lic["hwid"] is None:
         lic["hwid"] = hwid
+        print("🔐 FIRST ACTIVATION")
 
     if lic["hwid"] != hwid:
+        print("❌ HWID DIFFERENT")
         return jsonify({"valid": False})
 
     if not lic["active"]:
+        print("❌ LICENSE DISABLED")
         return jsonify({"valid": False})
 
+    print("✅ VALID LICENSE")
     return jsonify({"valid": True})
 
 if __name__ == "__main__":
