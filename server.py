@@ -6,7 +6,7 @@ import json
 # =========================
 # 🔐 CONFIG
 # =========================
-ADMIN_KEY = "TUNESOFT_9xA$#2026_SECURE"
+ADMIN_KEY = "TUNESOFT_SECURE_2026"
 LICENSE_FILE = "licenses.json"
 
 app = Flask(__name__)
@@ -19,16 +19,13 @@ def load_licenses():
         with open(LICENSE_FILE, "r") as f:
             return json.load(f)
 
-    # 🔁 fallback si fichier absent
     return {
         "ABC123456789": {"hwid": None, "active": True}
     }
 
-
 def save_licenses(data):
     with open(LICENSE_FILE, "w") as f:
         json.dump(data, f, indent=4)
-
 
 licenses = load_licenses()
 
@@ -46,15 +43,13 @@ def home():
     return "Server OK"
 
 # =========================
-# 🔐 GENERATE LICENSE (ADMIN ONLY)
+# 🔐 GENERATE LICENSE
 # =========================
 @app.route("/generate", methods=["GET"])
 def generate():
     admin = request.args.get("admin")
 
-    # 🔒 protection admin
     if admin != ADMIN_KEY:
-        print("❌ UNAUTHORIZED ACCESS")
         return jsonify({"error": "Unauthorized"}), 403
 
     key = generate_key()
@@ -66,9 +61,30 @@ def generate():
 
     save_licenses(licenses)
 
-    print("🆕 NEW KEY GENERATED:", key)
+    print("🆕 NEW KEY:", key)
 
     return jsonify({"key": key})
+
+# =========================
+# 🔄 RESET LICENSE (TRÈS IMPORTANT)
+# =========================
+@app.route("/reset", methods=["GET"])
+def reset():
+    admin = request.args.get("admin")
+    key = request.args.get("key")
+
+    if admin != ADMIN_KEY:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    if key not in licenses:
+        return jsonify({"error": "Key not found"}), 404
+
+    licenses[key]["hwid"] = None
+    save_licenses(licenses)
+
+    print("♻️ RESET:", key)
+
+    return jsonify({"status": "reset OK"})
 
 # =========================
 # 🔍 CHECK LICENSE
@@ -79,38 +95,27 @@ def check():
     key = data.get("key")
     hwid = data.get("hwid")
 
-    print("---- REQUETE RECUE ----")
-    print("KEY :", key)
-    print("HWID :", hwid)
+    print("KEY:", key, "| HWID:", hwid)
 
-    # ❌ clé inexistante
     if key not in licenses:
-        print("❌ INVALID KEY")
         return jsonify({"valid": False})
 
     lic = licenses[key]
 
-    # 🔐 première activation
     if lic["hwid"] is None:
         lic["hwid"] = hwid
         save_licenses(licenses)
-        print("🔐 FIRST ACTIVATION")
 
-    # ❌ mauvais PC
     if lic["hwid"] != hwid:
-        print("❌ HWID DIFFERENT")
         return jsonify({"valid": False})
 
-    # ❌ licence désactivée
     if not lic["active"]:
-        print("❌ LICENSE DISABLED")
         return jsonify({"valid": False})
 
-    print("✅ VALID LICENSE")
     return jsonify({"valid": True})
 
 # =========================
-# 🚀 START SERVER
+# 🚀 START
 # =========================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
