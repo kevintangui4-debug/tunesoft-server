@@ -14,13 +14,13 @@ LICENSE_FILE = "licenses.json"
 app = Flask(__name__)
 
 # =========================
-# 🛡️ ANTI-SPAM SIMPLE
+# 🛡️ ANTI-SPAM
 # =========================
 last_requests = {}
 
 @app.before_request
 def limit_requests():
-    ip = request.remote_addr
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr)
     now = time()
 
     if ip in last_requests and now - last_requests[ip] < 0.3:
@@ -35,7 +35,10 @@ def load_licenses():
     if os.path.exists(LICENSE_FILE):
         try:
             with open(LICENSE_FILE, "r") as f:
-                return json.load(f)
+                data = f.read().strip()
+                if not data:
+                    return {}
+                return json.loads(data)
         except:
             return {}
     return {}
@@ -60,9 +63,9 @@ def home():
     return "Server OK"
 
 # =========================
-# 🔐 GENERATE LICENSE
+# 🔐 GENERATE
 # =========================
-@app.route("/generate", methods=["GET"])
+@app.route("/generate")
 def generate():
     if request.args.get("admin") != ADMIN_KEY:
         return jsonify({"error": "Unauthorized"}), 403
@@ -80,9 +83,9 @@ def generate():
     return jsonify({"key": key})
 
 # =========================
-# 🔁 RESET LICENSE
+# 🔁 RESET
 # =========================
-@app.route("/reset", methods=["GET"])
+@app.route("/reset")
 def reset():
     if request.args.get("admin") != ADMIN_KEY:
         return jsonify({"error": "Unauthorized"}), 403
@@ -98,9 +101,9 @@ def reset():
     return jsonify({"status": "reset OK"})
 
 # =========================
-# ❌ DISABLE LICENSE
+# ❌ DISABLE
 # =========================
-@app.route("/disable", methods=["GET"])
+@app.route("/disable")
 def disable():
     if request.args.get("admin") != ADMIN_KEY:
         return jsonify({"error": "Unauthorized"}), 403
@@ -116,9 +119,9 @@ def disable():
     return jsonify({"status": "disabled"})
 
 # =========================
-# 📋 LIST LICENSES
+# 📋 LIST
 # =========================
-@app.route("/licenses", methods=["GET"])
+@app.route("/licenses")
 def list_licenses():
     if request.args.get("admin") != ADMIN_KEY:
         return jsonify({"error": "Unauthorized"}), 403
@@ -126,7 +129,7 @@ def list_licenses():
     return jsonify(licenses)
 
 # =========================
-# 🔍 CHECK LICENSE
+# 🔍 CHECK
 # =========================
 @app.route("/check", methods=["POST"])
 def check():
@@ -147,126 +150,17 @@ def check():
     lic = licenses[key]
     hwid_hash = hashlib.sha256(hwid.encode()).hexdigest()
 
-    # 🔐 première activation
     if lic["hwid"] is None:
         lic["hwid"] = hwid_hash
         save_licenses(licenses)
 
-    # 🔒 mauvais PC
     if lic["hwid"] != hwid_hash:
         return jsonify({"valid": False})
 
-    # 🔒 licence désactivée
     if not lic["active"]:
         return jsonify({"valid": False})
 
     return jsonify({"valid": True})
-
-# =========================
-# 🧠 ADMIN PANEL
-# =========================
-@app.route("/admin")
-def admin_panel():
-    if request.args.get("admin") != ADMIN_KEY:
-        return "Accès refusé", 403
-
-    return f"""
-    <html>
-    <head>
-        <title>TUNESOFT ADMIN</title>
-        <style>
-            body {{
-                font-family: Arial;
-                background: #111;
-                color: white;
-                text-align: center;
-                padding: 40px;
-            }}
-            input, button {{
-                padding: 10px;
-                margin: 5px;
-                border-radius: 5px;
-                border: none;
-            }}
-            button {{
-                background: orange;
-                cursor: pointer;
-            }}
-            .box {{
-                background: #222;
-                padding: 20px;
-                margin: 20px;
-                border-radius: 10px;
-            }}
-            pre {{
-                background: black;
-                padding: 10px;
-                text-align: left;
-                overflow-x: auto;
-            }}
-        </style>
-    </head>
-    <body>
-
-        <h1>🔥 TUNESOFT ADMIN PANEL</h1>
-
-        <div class="box">
-            <h2>Générer une clé</h2>
-            <button onclick="generate()">GÉNÉRER</button>
-            <p id="newkey"></p>
-        </div>
-
-        <div class="box">
-            <h2>Reset licence</h2>
-            <input id="resetkey" placeholder="clé">
-            <button onclick="reset()">RESET</button>
-            <p id="resetresult"></p>
-        </div>
-
-        <div class="box">
-            <h2>Désactiver licence</h2>
-            <input id="disablekey" placeholder="clé">
-            <button onclick="disableKey()">DISABLE</button>
-            <p id="disableresult"></p>
-        </div>
-
-        <div class="box">
-            <h2>Voir licences</h2>
-            <button onclick="loadLicenses()">AFFICHER</button>
-            <pre id="list"></pre>
-        </div>
-
-        <script>
-        function generate() {{
-            fetch('/generate?admin={ADMIN_KEY}')
-            .then(r=>r.json())
-            .then(d=>document.getElementById('newkey').innerText=d.key)
-        }}
-
-        function reset() {{
-            let k=document.getElementById('resetkey').value;
-            fetch(`/reset?key=${{k}}&admin={ADMIN_KEY}`)
-            .then(r=>r.json())
-            .then(d=>document.getElementById('resetresult').innerText=JSON.stringify(d))
-        }}
-
-        function disableKey() {{
-            let k=document.getElementById('disablekey').value;
-            fetch(`/disable?key=${{k}}&admin={ADMIN_KEY}`)
-            .then(r=>r.json())
-            .then(d=>document.getElementById('disableresult').innerText=JSON.stringify(d))
-        }}
-
-        function loadLicenses() {{
-            fetch('/licenses?admin={ADMIN_KEY}')
-            .then(r=>r.json())
-            .then(d=>document.getElementById('list').innerText=JSON.stringify(d,null,2))
-        }}
-        </script>
-
-    </body>
-    </html>
-    """
 
 # =========================
 # 🚀 START
