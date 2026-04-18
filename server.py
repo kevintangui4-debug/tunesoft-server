@@ -19,8 +19,7 @@ def load_licenses():
         with open(LICENSE_FILE, "r") as f:
             return json.load(f)
 
-    return {
-        "ABC123456789": {"hwid": None, "active": True}
+    
     }
 
 def save_licenses(data):
