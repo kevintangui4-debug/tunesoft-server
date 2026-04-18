@@ -8,7 +8,7 @@ from time import time
 # =========================
 # 🔐 CONFIG
 # =========================
-ADMIN_KEY = os.environ.get("ADMIN_KEY", "CHANGE_ME")  # ⚠️ à changer sur Render
+ADMIN_KEY = os.environ.get("ADMIN_KEY", "CHANGE_ME")
 LICENSE_FILE = "licenses.json"
 
 app = Flask(__name__)
@@ -23,7 +23,7 @@ def limit_requests():
     ip = request.remote_addr
     now = time()
 
-    if ip in last_requests and now - last_requests[ip] < 0.5:
+    if ip in last_requests and now - last_requests[ip] < 0.3:
         return "Too many requests", 429
 
     last_requests[ip] = now
@@ -50,8 +50,7 @@ licenses = load_licenses()
 # 🔑 GENERATE KEY
 # =========================
 def generate_key():
-    raw = uuid.uuid4().hex[:16].upper()
-    return raw
+    return uuid.uuid4().hex[:16].upper()
 
 # =========================
 # 🏠 HOME
@@ -65,9 +64,7 @@ def home():
 # =========================
 @app.route("/generate", methods=["GET"])
 def generate():
-    admin = request.args.get("admin")
-
-    if admin != ADMIN_KEY:
+    if request.args.get("admin") != ADMIN_KEY:
         return jsonify({"error": "Unauthorized"}), 403
 
     key = generate_key()
@@ -87,11 +84,10 @@ def generate():
 # =========================
 @app.route("/reset", methods=["GET"])
 def reset():
-    admin = request.args.get("admin")
-    key = request.args.get("key")
-
-    if admin != ADMIN_KEY:
+    if request.args.get("admin") != ADMIN_KEY:
         return jsonify({"error": "Unauthorized"}), 403
+
+    key = request.args.get("key")
 
     if key not in licenses:
         return jsonify({"error": "Key not found"}), 404
@@ -106,11 +102,10 @@ def reset():
 # =========================
 @app.route("/disable", methods=["GET"])
 def disable():
-    admin = request.args.get("admin")
-    key = request.args.get("key")
-
-    if admin != ADMIN_KEY:
+    if request.args.get("admin") != ADMIN_KEY:
         return jsonify({"error": "Unauthorized"}), 403
+
+    key = request.args.get("key")
 
     if key not in licenses:
         return jsonify({"error": "Key not found"}), 404
@@ -125,9 +120,7 @@ def disable():
 # =========================
 @app.route("/licenses", methods=["GET"])
 def list_licenses():
-    admin = request.args.get("admin")
-
-    if admin != ADMIN_KEY:
+    if request.args.get("admin") != ADMIN_KEY:
         return jsonify({"error": "Unauthorized"}), 403
 
     return jsonify(licenses)
@@ -152,14 +145,15 @@ def check():
         return jsonify({"valid": False})
 
     lic = licenses[key]
+    hwid_hash = hashlib.sha256(hwid.encode()).hexdigest()
 
     # 🔐 première activation
     if lic["hwid"] is None:
-        lic["hwid"] = hashlib.sha256(hwid.encode()).hexdigest()
+        lic["hwid"] = hwid_hash
         save_licenses(licenses)
 
-    # 🔒 vérification HWID
-    if lic["hwid"] != hashlib.sha256(hwid.encode()).hexdigest():
+    # 🔒 mauvais PC
+    if lic["hwid"] != hwid_hash:
         return jsonify({"valid": False})
 
     # 🔒 licence désactivée
@@ -173,9 +167,7 @@ def check():
 # =========================
 @app.route("/admin")
 def admin_panel():
-    admin = request.args.get("admin")
-
-    if admin != ADMIN_KEY:
+    if request.args.get("admin") != ADMIN_KEY:
         return "Accès refusé", 403
 
     return f"""
