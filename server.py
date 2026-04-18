@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify
-import uuid
-import os
 import json
+import os
+import uuid
 
 # =========================
 # 🔐 CONFIG
@@ -12,7 +12,7 @@ LICENSE_FILE = "licenses.json"
 app = Flask(__name__)
 
 # =========================
-# 📂 LOAD / SAVE LICENSES
+# 📂 LOAD / SAVE
 # =========================
 def load_licenses():
     if os.path.exists(LICENSE_FILE):
@@ -43,7 +43,7 @@ def home():
     return "Server OK"
 
 # =========================
-# 🔐 GENERATE LICENSE
+# 🔐 GENERATE LICENSE (ADMIN)
 # =========================
 @app.route("/generate", methods=["GET"])
 def generate():
@@ -61,12 +61,10 @@ def generate():
 
     save_licenses(licenses)
 
-    print("🆕 NEW KEY:", key)
-
     return jsonify({"key": key})
 
 # =========================
-# 🔄 RESET LICENSE (TRÈS IMPORTANT)
+# 🔁 RESET LICENSE (ADMIN)
 # =========================
 @app.route("/reset", methods=["GET"])
 def reset():
@@ -82,8 +80,6 @@ def reset():
     licenses[key]["hwid"] = None
     save_licenses(licenses)
 
-    print("♻️ RESET:", key)
-
     return jsonify({"status": "reset OK"})
 
 # =========================
@@ -95,27 +91,109 @@ def check():
     key = data.get("key")
     hwid = data.get("hwid")
 
-    print("KEY:", key, "| HWID:", hwid)
-
     if key not in licenses:
         return jsonify({"valid": False})
 
     lic = licenses[key]
 
+    # 🔐 première activation
     if lic["hwid"] is None:
         lic["hwid"] = hwid
         save_licenses(licenses)
 
+    # ❌ mauvais PC
     if lic["hwid"] != hwid:
         return jsonify({"valid": False})
 
+    # ❌ désactivée
     if not lic["active"]:
         return jsonify({"valid": False})
 
     return jsonify({"valid": True})
 
 # =========================
+# 🧠 ADMIN PANEL (WEB UI)
+# =========================
+@app.route("/admin")
+def admin_panel():
+    admin = request.args.get("admin")
+
+    if admin != ADMIN_KEY:
+        return "Accès refusé", 403
+
+    return f"""
+    <html>
+    <head>
+        <title>TUNESOFT ADMIN</title>
+        <style>
+            body {{
+                font-family: Arial;
+                background: #111;
+                color: white;
+                text-align: center;
+                padding: 40px;
+            }}
+            input, button {{
+                padding: 10px;
+                margin: 5px;
+                border: none;
+                border-radius: 5px;
+            }}
+            button {{
+                background: orange;
+                cursor: pointer;
+            }}
+            .box {{
+                background: #222;
+                padding: 20px;
+                margin: 20px;
+                border-radius: 10px;
+            }}
+        </style>
+    </head>
+    <body>
+
+        <h1>🔥 TUNESOFT ADMIN PANEL</h1>
+
+        <div class="box">
+            <h2>Générer une clé</h2>
+            <button onclick="generate()">GÉNÉRER</button>
+            <p id="newkey"></p>
+        </div>
+
+        <div class="box">
+            <h2>Reset licence</h2>
+            <input id="resetkey" placeholder="Entrer clé">
+            <button onclick="reset()">RESET</button>
+            <p id="resetresult"></p>
+        </div>
+
+        <script>
+        function generate() {{
+            fetch('/generate?admin={ADMIN_KEY}')
+            .then(res => res.json())
+            .then(data => {{
+                document.getElementById('newkey').innerText = data.key;
+            }});
+        }}
+
+        function reset() {{
+            let key = document.getElementById('resetkey').value;
+
+            fetch(`/reset?key=${{key}}&admin={ADMIN_KEY}`)
+            .then(res => res.json())
+            .then(data => {{
+                document.getElementById('resetresult').innerText = JSON.stringify(data);
+            }});
+        }}
+        </script>
+
+    </body>
+    </html>
+    """
+
+# =========================
 # 🚀 START
 # =========================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(port=5000)
