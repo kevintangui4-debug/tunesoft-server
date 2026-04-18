@@ -63,7 +63,7 @@ def home():
     return "Server OK"
 
 # =========================
-# 🔐 GENERATE
+# 🔐 GENERATE LICENSE
 # =========================
 @app.route("/generate")
 def generate():
@@ -83,7 +83,7 @@ def generate():
     return jsonify({"key": key})
 
 # =========================
-# 🔁 RESET
+# 🔁 RESET LICENSE
 # =========================
 @app.route("/reset")
 def reset():
@@ -92,7 +92,7 @@ def reset():
 
     key = request.args.get("key")
 
-    if key not in licenses:
+    if key not in licenses or not isinstance(licenses[key], dict):
         return jsonify({"error": "Key not found"}), 404
 
     licenses[key]["hwid"] = None
@@ -101,7 +101,7 @@ def reset():
     return jsonify({"status": "reset OK"})
 
 # =========================
-# ❌ DISABLE
+# ❌ DISABLE LICENSE
 # =========================
 @app.route("/disable")
 def disable():
@@ -110,7 +110,7 @@ def disable():
 
     key = request.args.get("key")
 
-    if key not in licenses:
+    if key not in licenses or not isinstance(licenses[key], dict):
         return jsonify({"error": "Key not found"}), 404
 
     licenses[key]["active"] = False
@@ -119,7 +119,7 @@ def disable():
     return jsonify({"status": "disabled"})
 
 # =========================
-# 📋 LIST
+# 📋 LIST LICENSES
 # =========================
 @app.route("/licenses")
 def list_licenses():
@@ -129,7 +129,7 @@ def list_licenses():
     return jsonify(licenses)
 
 # =========================
-# 🔍 CHECK
+# 🔍 CHECK LICENSE
 # =========================
 @app.route("/check", methods=["POST"])
 def check():
@@ -144,20 +144,23 @@ def check():
     if not key or not hwid:
         return jsonify({"valid": False})
 
-    if key not in licenses:
+    if key not in licenses or not isinstance(licenses[key], dict):
         return jsonify({"valid": False})
 
     lic = licenses[key]
     hwid_hash = hashlib.sha256(hwid.encode()).hexdigest()
 
+    # 🔐 première activation
     if lic["hwid"] is None:
         lic["hwid"] = hwid_hash
         save_licenses(licenses)
 
+    # 🔒 mauvais PC
     if lic["hwid"] != hwid_hash:
         return jsonify({"valid": False})
 
-    if not lic["active"]:
+    # 🔒 licence désactivée
+    if not lic.get("active", False):
         return jsonify({"valid": False})
 
     return jsonify({"valid": True})
