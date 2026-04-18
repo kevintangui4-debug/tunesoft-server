@@ -9,7 +9,6 @@ from time import time
 # 🔐 CONFIG
 # =========================
 ADMIN_KEY = os.environ.get("ADMIN_KEY", "CHANGE_ME")
-ADMIN_KEY = TUNESOFT_SECURE_2026
 LICENSE_FILE = "licenses.json"
 
 app = Flask(__name__)
