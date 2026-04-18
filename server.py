@@ -43,7 +43,7 @@ def home():
     return "Server OK"
 
 # =========================
-# 🔐 GENERATE LICENSE (ADMIN)
+# 🔐 GENERATE LICENSE
 # =========================
 @app.route("/generate", methods=["GET"])
 def generate():
@@ -64,7 +64,7 @@ def generate():
     return jsonify({"key": key})
 
 # =========================
-# 🔁 RESET LICENSE (ADMIN)
+# 🔁 RESET LICENSE
 # =========================
 @app.route("/reset", methods=["GET"])
 def reset():
@@ -83,6 +83,18 @@ def reset():
     return jsonify({"status": "reset OK"})
 
 # =========================
+# 📋 LIST LICENSES
+# =========================
+@app.route("/licenses", methods=["GET"])
+def list_licenses():
+    admin = request.args.get("admin")
+
+    if admin != ADMIN_KEY:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    return jsonify(licenses)
+
+# =========================
 # 🔍 CHECK LICENSE
 # =========================
 @app.route("/check", methods=["POST"])
@@ -96,23 +108,21 @@ def check():
 
     lic = licenses[key]
 
-    # 🔐 première activation
+    # première activation
     if lic["hwid"] is None:
         lic["hwid"] = hwid
         save_licenses(licenses)
 
-    # ❌ mauvais PC
     if lic["hwid"] != hwid:
         return jsonify({"valid": False})
 
-    # ❌ désactivée
     if not lic["active"]:
         return jsonify({"valid": False})
 
     return jsonify({"valid": True})
 
 # =========================
-# 🧠 ADMIN PANEL (WEB UI)
+# 🧠 ADMIN PANEL
 # =========================
 @app.route("/admin")
 def admin_panel():
@@ -149,6 +159,13 @@ def admin_panel():
                 margin: 20px;
                 border-radius: 10px;
             }}
+            pre {{
+                text-align: left;
+                background: #000;
+                padding: 10px;
+                border-radius: 5px;
+                overflow-x: auto;
+            }}
         </style>
     </head>
     <body>
@@ -166,6 +183,12 @@ def admin_panel():
             <input id="resetkey" placeholder="Entrer clé">
             <button onclick="reset()">RESET</button>
             <p id="resetresult"></p>
+        </div>
+
+        <div class="box">
+            <h2>Voir licences</h2>
+            <button onclick="loadLicenses()">AFFICHER</button>
+            <pre id="licenselist"></pre>
         </div>
 
         <script>
@@ -186,6 +209,15 @@ def admin_panel():
                 document.getElementById('resetresult').innerText = JSON.stringify(data);
             }});
         }}
+
+        function loadLicenses() {{
+            fetch('/licenses?admin={ADMIN_KEY}')
+            .then(res => res.json())
+            .then(data => {{
+                document.getElementById('licenselist').innerText =
+                    JSON.stringify(data, null, 2);
+            }});
+        }}
         </script>
 
     </body>
@@ -196,4 +228,4 @@ def admin_panel():
 # 🚀 START
 # =========================
 if __name__ == "__main__":
-    app.run(port=5000)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
