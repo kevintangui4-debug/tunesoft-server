@@ -1,15 +1,16 @@
 from flask import Flask, request, jsonify
-import json
 import os
-import uuid
+import sqlite3
 import hashlib
-from time import time
+import hmac
+import time
 
 # =========================
-# 🔐 CONFIG
+# 🔐 CONFIG (ENV VARIABLES)
 # =========================
-ADMIN_KEY = "TUNESOFT_SUPER_SECRET_8472"  # ✅ clé admin directe
-LICENSE_FILE = "licenses.json"
+ADMIN_KEY = os.environ.get("ADMIN_KEY", "CHANGE_ME")
+SECRET_KEY = os.environ.get("SECRET_KEY", "SUPER_SECRET")
+DB_FILE = "licenses.db"
 
 app = Flask(__name__)
 
@@ -21,7 +22,7 @@ last_requests = {}
 @app.before_request
 def limit_requests():
     ip = request.headers.get("X-Forwarded-For", request.remote_addr)
-    now = time()
+    now = time.time()
 
     if ip in last_requests and now - last_requests[ip] < 0.3:
         return "Too many requests", 429
@@ -29,31 +30,30 @@ def limit_requests():
     last_requests[ip] = now
 
 # =========================
-# 📂 LOAD / SAVE
+# 📂 DATABASE
 # =========================
-def load_licenses():
-    if os.path.exists(LICENSE_FILE):
-        try:
-            with open(LICENSE_FILE, "r") as f:
-                data = f.read().strip()
-                if not data:
-                    return {}
-                return json.loads(data)
-        except:
-            return {}
-    return {}
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS licenses (
+            key TEXT PRIMARY KEY,
+            hwid TEXT,
+            active INTEGER,
+            created_at INTEGER,
+            expires_at INTEGER
+        )
+    """)
+    conn.commit()
+    conn.close()
 
-def save_licenses(data):
-    with open(LICENSE_FILE, "w") as f:
-        json.dump(data, f, indent=4)
-
-licenses = load_licenses()
+init_db()
 
 # =========================
-# 🔑 GENERATE KEY
+# 🔑 GENERATE LICENSE
 # =========================
 def generate_key():
-    return uuid.uuid4().hex[:16].upper()
+    return hashlib.sha256(os.urandom(32)).hexdigest()[:20].upper()
 
 # =========================
 # 🏠 HOME
@@ -65,108 +65,157 @@ def home():
 # =========================
 # 🔐 GENERATE LICENSE
 # =========================
-@app.route("/generate")
+@app.route("/generate", methods=["POST"])
 def generate():
-    if request.args.get("admin") != ADMIN_KEY:
+    if request.headers.get("X-API-KEY") != ADMIN_KEY:
         return jsonify({"error": "Unauthorized"}), 403
 
     key = generate_key()
 
-    licenses[key] = {
-        "hwid": None,
-        "active": True,
-        "created_at": int(time())
-    }
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
 
-    save_licenses(licenses)
+    expires_at = int(time.time()) + 30 * 24 * 3600  # 30 jours
+
+    c.execute("""
+        INSERT INTO licenses (key, hwid, active, created_at, expires_at)
+        VALUES (?, ?, ?, ?, ?)
+    """, (key, None, 1, int(time.time()), expires_at))
+
+    conn.commit()
+    conn.close()
 
     return jsonify({"key": key})
 
 # =========================
 # 🔁 RESET LICENSE
 # =========================
-@app.route("/reset")
+@app.route("/reset", methods=["POST"])
 def reset():
-    if request.args.get("admin") != ADMIN_KEY:
+    if request.headers.get("X-API-KEY") != ADMIN_KEY:
         return jsonify({"error": "Unauthorized"}), 403
 
-    key = request.args.get("key")
+    key = request.json.get("key")
 
-    if key not in licenses or not isinstance(licenses[key], dict):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+
+    c.execute("UPDATE licenses SET hwid=NULL WHERE key=?", (key,))
+    conn.commit()
+
+    if c.rowcount == 0:
         return jsonify({"error": "Key not found"}), 404
 
-    licenses[key]["hwid"] = None
-    save_licenses(licenses)
-
+    conn.close()
     return jsonify({"status": "reset OK"})
 
 # =========================
 # ❌ DISABLE LICENSE
 # =========================
-@app.route("/disable")
+@app.route("/disable", methods=["POST"])
 def disable():
-    if request.args.get("admin") != ADMIN_KEY:
+    if request.headers.get("X-API-KEY") != ADMIN_KEY:
         return jsonify({"error": "Unauthorized"}), 403
 
-    key = request.args.get("key")
+    key = request.json.get("key")
 
-    if key not in licenses or not isinstance(licenses[key], dict):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+
+    c.execute("UPDATE licenses SET active=0 WHERE key=?", (key,))
+    conn.commit()
+
+    if c.rowcount == 0:
         return jsonify({"error": "Key not found"}), 404
 
-    licenses[key]["active"] = False
-    save_licenses(licenses)
-
+    conn.close()
     return jsonify({"status": "disabled"})
 
 # =========================
 # 📋 LIST LICENSES
 # =========================
-@app.route("/licenses")
+@app.route("/licenses", methods=["POST"])
 def list_licenses():
-    if request.args.get("admin") != ADMIN_KEY:
+    if request.headers.get("X-API-KEY") != ADMIN_KEY:
         return jsonify({"error": "Unauthorized"}), 403
 
-    return jsonify(licenses)
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+
+    c.execute("SELECT key, active, created_at, expires_at FROM licenses")
+    rows = c.fetchall()
+
+    conn.close()
+
+    return jsonify(rows)
 
 # =========================
-# 🔍 CHECK LICENSE
+# 🔍 CHECK LICENSE (SECURE)
 # =========================
 @app.route("/check", methods=["POST"])
 def check():
     data = request.json
 
-    if not data:
-        return jsonify({"valid": False})
-
     key = data.get("key")
     hwid = data.get("hwid")
+    timestamp = data.get("timestamp")
+    signature = data.get("signature")
 
-    if not key or not hwid:
+    if not key or not hwid or not timestamp or not signature:
         return jsonify({"valid": False})
 
-    if key not in licenses or not isinstance(licenses[key], dict):
+    # ⏱️ Anti replay
+    if abs(time.time() - int(timestamp)) > 30:
         return jsonify({"valid": False})
 
-    lic = licenses[key]
+    # 🔐 Vérif signature
+    payload = hwid + str(timestamp)
+    expected_sig = hmac.new(
+        SECRET_KEY.encode(),
+        payload.encode(),
+        hashlib.sha256
+    ).hexdigest()
+
+    if not hmac.compare_digest(expected_sig, signature):
+        return jsonify({"valid": False})
+
     hwid_hash = hashlib.sha256(hwid.encode()).hexdigest()
 
-    # 🔐 première activation
-    if lic["hwid"] is None:
-        lic["hwid"] = hwid_hash
-        save_licenses(licenses)
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
 
-    # 🔒 mauvais PC
-    if lic["hwid"] != hwid_hash:
+    c.execute("SELECT hwid, active, expires_at FROM licenses WHERE key=?", (key,))
+    row = c.fetchone()
+
+    conn.close()
+
+    if not row:
         return jsonify({"valid": False})
 
-    # 🔒 licence désactivée
-    if not lic.get("active", False):
+    db_hwid, active, expires_at = row
+
+    # 🔐 Première activation
+    if db_hwid is None:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("UPDATE licenses SET hwid=? WHERE key=?", (hwid_hash, key))
+        conn.commit()
+        conn.close()
+        db_hwid = hwid_hash
+
+    if db_hwid != hwid_hash:
         return jsonify({"valid": False})
+
+    if not active:
+        return jsonify({"valid": False})
+
+    if time.time() > expires_at:
+        return jsonify({"valid": False, "error": "expired"})
 
     return jsonify({"valid": True})
 
 # =========================
-# 🚀 START
+# 🚀 START (RENDER)
 # =========================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
