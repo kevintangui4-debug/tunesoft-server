@@ -15,7 +15,7 @@ DB_FILE = "licenses.db"
 app = Flask(__name__)
 
 # =========================
-# 📂 DATABASE
+# 📂 INIT DB
 # =========================
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -89,10 +89,13 @@ def check():
     except:
         return jsonify({"valid": False})
 
+    # ⏱ anti replay
     if abs(time.time() - timestamp) > 30:
         return jsonify({"valid": False})
 
+    # 🔐 signature check
     payload = hwid + str(timestamp)
+
     expected_sig = hmac.new(
         SECRET_KEY.encode(),
         payload.encode(),
@@ -102,7 +105,7 @@ def check():
     if not hmac.compare_digest(expected_sig, signature):
         return jsonify({"valid": False})
 
-    hwid_hash = hashlib.sha256(hwid.encode()).hexdigest()
+    hwid_hash = hashlib.sha256(hwid.strip().encode()).hexdigest()
 
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -116,6 +119,7 @@ def check():
 
     db_hwid, active, expires_at = row
 
+    # 🔐 first bind
     if db_hwid is None:
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
@@ -134,3 +138,9 @@ def check():
         return jsonify({"valid": False})
 
     return jsonify({"valid": True})
+
+# =========================
+# 🚀 RUN
+# =========================
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
