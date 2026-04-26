@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template_string, redirect
 import os
 import sqlite3
 import hashlib
@@ -15,7 +15,7 @@ DB_FILE = "licenses.db"
 app = Flask(__name__)
 
 # =========================
-# 📂 DB INIT
+# 📂 DB
 # =========================
 def get_db():
     conn = sqlite3.connect(DB_FILE)
@@ -42,6 +42,12 @@ def init_db():
 init_db()
 
 # =========================
+# 🔑 UTIL
+# =========================
+def generate_key():
+    return hashlib.sha256(os.urandom(64)).hexdigest()[:20].upper()
+
+# =========================
 # 🏠 HOME
 # =========================
 @app.route("/")
@@ -49,11 +55,8 @@ def home():
     return "TUNESOFT LICENSE SERVER OK"
 
 # =========================
-# 🔑 GENERATE LICENSE (ADMIN)
+# 🔑 GENERATE (API ADMIN)
 # =========================
-def generate_key():
-    return hashlib.sha256(os.urandom(64)).hexdigest()[:20].upper()
-
 @app.route("/generate", methods=["POST"])
 def generate():
     if request.headers.get("X-API-KEY") != ADMIN_KEY:
@@ -61,23 +64,18 @@ def generate():
 
     key = generate_key()
     now = int(time.time())
-    expires = now + (30 * 24 * 3600)  # 30 jours
+    expires = now + (30 * 24 * 3600)
 
     conn = get_db()
     c = conn.cursor()
-
     c.execute("""
         INSERT INTO licenses (key, hwid, active, created_at, expires_at)
         VALUES (?, ?, ?, ?, ?)
     """, (key, None, 1, now, expires))
-
     conn.commit()
     conn.close()
 
-    return jsonify({
-        "key": key,
-        "expires_at": expires
-    })
+    return jsonify({"key": key, "expires_at": expires})
 
 # =========================
 # 🔍 CHECK LICENSE
@@ -91,9 +89,6 @@ def check():
     timestamp = data.get("timestamp")
     signature = data.get("signature")
 
-    # -------------------------
-    # VALIDATION INPUT
-    # -------------------------
     if not key or not hwid or not timestamp or not signature:
         return jsonify({"valid": False, "reason": "missing_data"})
 
@@ -102,35 +97,26 @@ def check():
     except:
         return jsonify({"valid": False, "reason": "bad_timestamp"})
 
-    # -------------------------
-    # ANTI REPLAY
-    # -------------------------
+    # anti replay
     if abs(time.time() - timestamp) > 30:
-        return jsonify({"valid": False, "reason": "replay_detected"})
+        return jsonify({"valid": False, "reason": "replay"})
 
-    # -------------------------
-    # SIGNATURE CHECK
-    # -------------------------
+    # signature check
     payload = hwid + str(timestamp)
 
-    expected_sig = hmac.new(
+    expected = hmac.new(
         SECRET_KEY.encode(),
         payload.encode(),
         hashlib.sha256
     ).hexdigest()
 
-    if not hmac.compare_digest(expected_sig, signature):
+    if not hmac.compare_digest(expected, signature):
         return jsonify({"valid": False, "reason": "bad_signature"})
 
-    # -------------------------
-    # LOAD LICENSE
-    # -------------------------
     conn = get_db()
     c = conn.cursor()
-
     c.execute("SELECT hwid, active, expires_at FROM licenses WHERE key=?", (key,))
     row = c.fetchone()
-
     conn.close()
 
     if not row:
@@ -140,42 +126,134 @@ def check():
     active = row["active"]
     expires_at = row["expires_at"]
 
-    # -------------------------
-    # EXPIRED
-    # -------------------------
     if time.time() > expires_at:
         return jsonify({"valid": False, "reason": "expired"})
 
-    # -------------------------
-    # FIRST ACTIVATION
-    # -------------------------
+    # first bind
     if db_hwid is None:
         conn = get_db()
         c = conn.cursor()
-
-        c.execute(
-            "UPDATE licenses SET hwid=? WHERE key=?",
-            (hwid, key)
-        )
-
+        c.execute("UPDATE licenses SET hwid=? WHERE key=?", (hwid, key))
         conn.commit()
         conn.close()
-
         return jsonify({"valid": True, "first_activation": True})
 
-    # -------------------------
-    # HWID CHECK
-    # -------------------------
     if db_hwid != hwid:
         return jsonify({"valid": False, "reason": "hwid_mismatch"})
 
-    # -------------------------
-    # STATUS CHECK
-    # -------------------------
     if not active:
         return jsonify({"valid": False, "reason": "disabled"})
 
     return jsonify({"valid": True})
+
+# =========================
+# 🔥 ADMIN DASHBOARD WEB
+# =========================
+ADMIN_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TUNESOFT ADMIN</title>
+    <style>
+        body { background:#111; color:white; font-family:Arial; }
+        table { width:100%; margin-top:20px; border-collapse: collapse; }
+        th, td { border:1px solid #333; padding:10px; text-align:center; }
+        button { padding:6px; background:#007acc; color:white; border:none; cursor:pointer; }
+    </style>
+</head>
+<body>
+
+<h1>🔥 TUNESOFT ADMIN PANEL</h1>
+
+<form method="POST" action="/admin/generate">
+    <button>➕ Générer clé</button>
+</form>
+
+<table>
+<tr>
+<th>KEY</th><th>HWID</th><th>ACTIVE</th><th>EXPIRES</th><th>ACTION</th>
+</tr>
+
+{% for l in licenses %}
+<tr>
+<td>{{l['key']}}</td>
+<td>{{l['hwid']}}</td>
+<td>{{l['active']}}</td>
+<td>{{l['expires_at']}}</td>
+<td>
+    <a href="/admin/ban/{{l['key']}}">
+        <button style="background:red;">BAN</button>
+    </a>
+</td>
+</tr>
+{% endfor %}
+
+</table>
+
+</body>
+</html>
+"""
+
+# =========================
+# ADMIN SECURITY
+# =========================
+def auth():
+    return request.headers.get("X-ADMIN-KEY") == ADMIN_KEY
+
+# =========================
+# ADMIN PAGE
+# =========================
+@app.route("/admin")
+def admin():
+    if not auth():
+        return "Unauthorized", 403
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT * FROM licenses")
+    licenses = c.fetchall()
+    conn.close()
+
+    return render_template_string(ADMIN_HTML, licenses=licenses)
+
+# =========================
+# ADMIN GENERATE
+# =========================
+@app.route("/admin/generate", methods=["POST"])
+def admin_generate():
+    if not auth():
+        return "Unauthorized", 403
+
+    key = generate_key()
+    now = int(time.time())
+    expires = now + (30 * 24 * 3600)
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO licenses (key, hwid, active, created_at, expires_at)
+        VALUES (?, ?, ?, ?, ?)
+    """, (key, None, 1, now, expires))
+    conn.commit()
+    conn.close()
+
+    return redirect("/admin")
+
+# =========================
+# BAN LICENSE
+# =========================
+@app.route("/admin/ban/<key>")
+def ban(key):
+    if not auth():
+        return "Unauthorized", 403
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("UPDATE licenses SET active=0 WHERE key=?", (key,))
+    conn.commit()
+    conn.close()
+
+    return redirect("/admin")
 
 # =========================
 # 🚀 RUN
