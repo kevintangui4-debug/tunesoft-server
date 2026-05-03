@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
-import time
 import sqlite3
+import time
 import os
 import hashlib
 
@@ -12,12 +12,31 @@ app = Flask(__name__)
 ADMIN_KEY = os.environ.get("ADMIN_KEY", "CHANGE_ME")
 
 # =========================
-# DB
+# DATABASE
 # =========================
 def get_db():
     conn = sqlite3.connect("licenses.db")
     conn.row_factory = sqlite3.Row
     return conn
+
+def init_db():
+    conn = get_db()
+    c = conn.cursor()
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS licenses (
+            key TEXT PRIMARY KEY,
+            hwid TEXT,
+            active INTEGER,
+            created_at INTEGER,
+            expires_at INTEGER
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+init_db()
 
 # =========================
 # KEY GENERATOR
@@ -57,7 +76,7 @@ def check():
     row = c.fetchone()
     conn.close()
 
-    if row is None:
+    if not row:
         return jsonify({"valid": False, "reason": "invalid_key"})
 
     db_hwid = row["hwid"]
@@ -66,21 +85,28 @@ def check():
 
     now = time.time()
 
+    # expiration
     if now > expires_at:
         return jsonify({"valid": False, "reason": "expired"})
 
+    # disabled
     if active == 0:
         return jsonify({"valid": False, "reason": "disabled"})
 
-    # auto bind HWID
+    # first activation (bind HWID)
     if db_hwid is None:
         conn = get_db()
         c = conn.cursor()
-        c.execute("UPDATE licenses SET hwid=? WHERE key=?", (hwid, key))
+        c.execute(
+            "UPDATE licenses SET hwid=? WHERE key=?",
+            (hwid, key)
+        )
         conn.commit()
         conn.close()
+
         return jsonify({"valid": True, "first_activation": True})
 
+    # HWID mismatch
     if db_hwid != hwid:
         return jsonify({"valid": False, "reason": "hwid_mismatch"})
 
@@ -102,18 +128,7 @@ def admin():
 
         <form method="POST" action="/admin/generate">
             <button style="padding:15px;background:#007acc;color:white;border:none;cursor:pointer;">
-                ⚡ GENERER CLE
-            </button>
-        </form>
-
-        <br><br>
-
-        <form method="POST" action="/admin/generate-hwid">
-            <input name="hwid" placeholder="HWID CLIENT"
-                style="padding:10px;width:300px;" />
-
-            <button style="padding:15px;background:#00c853;color:white;border:none;cursor:pointer;">
-                🔐 GENERER AVEC HWID
+                ⚡ GENERER UNE CLE
             </button>
         </form>
 
@@ -122,7 +137,7 @@ def admin():
     """
 
 # =========================
-# GENERATE NORMAL
+# GENERATE KEY
 # =========================
 @app.route("/admin/generate", methods=["POST"])
 def admin_generate():
@@ -135,10 +150,12 @@ def admin_generate():
 
     conn = get_db()
     c = conn.cursor()
+
     c.execute("""
         INSERT INTO licenses (key, hwid, active, created_at, expires_at)
         VALUES (?, ?, ?, ?, ?)
     """, (key, None, 1, now, expires))
+
     conn.commit()
     conn.close()
 
@@ -146,82 +163,27 @@ def admin_generate():
     <html>
     <body style="background:#111;color:white;font-family:Arial;text-align:center;padding-top:60px;">
 
-        <h2>🔑 CLE GENERÉE</h2>
+        <h2>🔑 LICENCE GÉNÉRÉE</h2>
 
         <input id="key" value="{key}" readonly
-            style="padding:10px;width:400px;text-align:center;" />
+            style="padding:10px;width:350px;text-align:center;" />
 
         <br><br>
 
-        <button onclick="copy()"
-            style="padding:10px 20px;background:#00c853;color:white;border:none;">
+        <button onclick="copyKey()"
+            style="padding:10px 20px;background:#00c853;color:white;border:none;cursor:pointer;">
             📋 COPIER + RETOUR
         </button>
 
         <script>
-        function copy() {{
+        function copyKey() {{
             let k = document.getElementById("key");
             k.select();
             document.execCommand("copy");
-            setTimeout(() => window.location.href="/admin", 1000);
-        }}
-        </script>
 
-    </body>
-    </html>
-    """
-
-# =========================
-# GENERATE WITH HWID
-# =========================
-@app.route("/admin/generate-hwid", methods=["POST"])
-def admin_generate_hwid():
-    if not auth():
-        return "Unauthorized", 403
-
-    hwid = request.form.get("hwid")
-
-    if not hwid:
-        return "Missing HWID", 400
-
-    key = generate_key()
-    now = int(time.time())
-    expires = now + (30 * 24 * 3600)
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO licenses (key, hwid, active, created_at, expires_at)
-        VALUES (?, ?, ?, ?, ?)
-    """, (key, hwid, 1, now, expires))
-    conn.commit()
-    conn.close()
-
-    return f"""
-    <html>
-    <body style="background:#111;color:white;font-family:Arial;text-align:center;padding-top:60px;">
-
-        <h2>🔐 LICENCE HWID</h2>
-
-        <p>HWID :</p>
-        <input value="{hwid}" readonly style="padding:10px;width:400px;" />
-
-        <p>KEY :</p>
-        <input id="key" value="{key}" readonly style="padding:10px;width:400px;" />
-
-        <br><br>
-
-        <button onclick="copy()"
-            style="padding:10px 20px;background:#00c853;color:white;border:none;">
-            📋 COPIER + RETOUR
-        </button>
-
-        <script>
-        function copy() {{
-            let k = document.getElementById("key");
-            k.select();
-            document.execCommand("copy");
-            setTimeout(() => window.location.href="/admin", 1000);
+            setTimeout(() => {{
+                window.location.href = "/admin";
+            }}, 800);
         }}
         </script>
 
