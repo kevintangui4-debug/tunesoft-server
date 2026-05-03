@@ -1,3 +1,18 @@
+from flask import Flask, request, jsonify
+import time
+import sqlite3
+
+app = Flask(__name__)  # ✅ OBLIGATOIRE EN PREMIER
+
+def get_db():
+    conn = sqlite3.connect("licenses.db")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+@app.route("/")
+def home():
+    return "OK"
+
 @app.route("/check", methods=["POST"])
 def check():
     data = request.json or {}
@@ -10,10 +25,7 @@ def check():
 
     conn = get_db()
     c = conn.cursor()
-    c.execute(
-        "SELECT hwid, active, expires_at FROM licenses WHERE key=?",
-        (key,)
-    )
+    c.execute("SELECT hwid, active, expires_at FROM licenses WHERE key=?", (key,))
     row = c.fetchone()
     conn.close()
 
@@ -24,41 +36,20 @@ def check():
     active = row["active"]
     expires_at = row["expires_at"]
 
-    now = time.time()
-
-    # =========================
-    # Expiration check
-    # =========================
-    if now > expires_at:
+    if time.time() > expires_at:
         return jsonify({"valid": False, "reason": "expired"})
 
-    # =========================
-    # Disabled check
-    # =========================
     if active == 0:
         return jsonify({"valid": False, "reason": "disabled"})
 
-    # =========================
-    # First activation (bind HWID)
-    # =========================
     if db_hwid is None:
         conn = get_db()
         c = conn.cursor()
-        c.execute(
-            "UPDATE licenses SET hwid=? WHERE key=?",
-            (hwid, key)
-        )
+        c.execute("UPDATE licenses SET hwid=? WHERE key=?", (hwid, key))
         conn.commit()
         conn.close()
+        return jsonify({"valid": True, "first_activation": True})
 
-        return jsonify({
-            "valid": True,
-            "first_activation": True
-        })
-
-    # =========================
-    # HWID check
-    # =========================
     if db_hwid != hwid:
         return jsonify({"valid": False, "reason": "hwid_mismatch"})
 
