@@ -1,13 +1,14 @@
 from flask import Flask, request, jsonify
 import sqlite3
-import hashlib
 import time
 import secrets
 
 app = Flask(__name__)
 DB = "licenses.db"
 
-# ---------- INIT DB ----------
+# =========================
+# 🧱 INIT DATABASE
+# =========================
 def init_db():
     conn = sqlite3.connect(DB)
     c = conn.cursor()
@@ -23,17 +24,19 @@ def init_db():
 
 init_db()
 
-# ---------- GENERER UNE LICENCE ----------
+# =========================
+# 🔑 GENERATE LICENSE
+# =========================
 def generate_key():
     return "LIC-" + secrets.token_hex(8).upper()
 
 @app.route("/create_license", methods=["POST"])
 def create_license():
     data = request.json
-    expires_days = data.get("days", 30)
+    days = data.get("days", 30)
 
     key = generate_key()
-    expires = int(time.time()) + expires_days * 86400
+    expires = int(time.time()) + days * 86400
 
     conn = sqlite3.connect(DB)
     c = conn.cursor()
@@ -41,38 +44,14 @@ def create_license():
     conn.commit()
     conn.close()
 
-    return jsonify({"license": key, "expires": expires})
+    return jsonify({
+        "license": key,
+        "expires": expires
+    })
 
-# ---------- ACTIVER LICENCE (lier HWID) ----------
-@app.route("/activate", methods=["POST"])
-def activate():
-    data = request.json
-    key = data.get("license")
-    hwid = data.get("hwid")
-
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute("SELECT hwid FROM licenses WHERE key=?", (key,))
-    row = c.fetchone()
-
-    if not row:
-        return jsonify({"status": "invalid"}), 403
-
-    stored_hwid = row[0]
-
-    # première activation
-    if stored_hwid is None:
-        c.execute("UPDATE licenses SET hwid=? WHERE key=?", (hwid, key))
-        conn.commit()
-        return jsonify({"status": "activated"})
-
-    # vérification HWID
-    if stored_hwid != hwid:
-        return jsonify({"status": "hwid_mismatch"}), 403
-
-    return jsonify({"status": "valid"})
-
-# ---------- CHECK LICENCE ----------
+# =========================
+# 🔐 CHECK + AUTO BIND HWID
+# =========================
 @app.route("/check", methods=["POST"])
 def check():
     data = request.json
@@ -81,6 +60,7 @@ def check():
 
     conn = sqlite3.connect(DB)
     c = conn.cursor()
+
     c.execute("SELECT hwid, expires FROM licenses WHERE key=?", (key,))
     row = c.fetchone()
 
@@ -89,13 +69,26 @@ def check():
 
     stored_hwid, expires = row
 
+    # ❌ expired
     if time.time() > expires:
         return jsonify({"status": "expired"}), 403
 
+    # 🧠 FIRST TIME → AUTO BIND HWID
+    if stored_hwid is None:
+        c.execute("UPDATE licenses SET hwid=? WHERE key=?", (hwid, key))
+        conn.commit()
+        conn.close()
+        return jsonify({"status": "valid"})
+
+    # ❌ wrong machine
     if stored_hwid != hwid:
+        conn.close()
         return jsonify({"status": "hwid_mismatch"}), 403
 
+    conn.close()
     return jsonify({"status": "valid"})
 
-
+# =========================
+# 🚀 START SERVER
+# =========================
 app.run(host="0.0.0.0", port=5000)
