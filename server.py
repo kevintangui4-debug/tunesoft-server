@@ -7,6 +7,11 @@ import hashlib
 app = Flask(__name__)
 
 # =========================
+# CONFIG
+# =========================
+ADMIN_KEY = os.environ.get("ADMIN_KEY", "CHANGE_ME")
+
+# =========================
 # DB
 # =========================
 def get_db():
@@ -21,14 +26,20 @@ def generate_key():
     return hashlib.sha256(os.urandom(64)).hexdigest()[:20].upper()
 
 # =========================
+# AUTH ADMIN
+# =========================
+def auth():
+    return request.headers.get("X-ADMIN-KEY") == ADMIN_KEY
+
+# =========================
 # HOME
 # =========================
 @app.route("/")
 def home():
-    return "OK"
+    return "TUNESOFT SERVER OK"
 
 # =========================
-# CHECK LICENSE
+# CHECK LICENSE (CLIENT)
 # =========================
 @app.route("/check", methods=["POST"])
 def check():
@@ -53,12 +64,15 @@ def check():
     active = row["active"]
     expires_at = row["expires_at"]
 
-    if time.time() > expires_at:
+    now = time.time()
+
+    if now > expires_at:
         return jsonify({"valid": False, "reason": "expired"})
 
     if active == 0:
         return jsonify({"valid": False, "reason": "disabled"})
 
+    # auto bind HWID
     if db_hwid is None:
         conn = get_db()
         c = conn.cursor()
@@ -73,15 +87,42 @@ def check():
     return jsonify({"valid": True})
 
 # =========================
-# ADMIN AUTH
+# ADMIN PANEL
 # =========================
-ADMIN_KEY = os.environ.get("ADMIN_KEY", "CHANGE_ME")
+@app.route("/admin")
+def admin():
+    if not auth():
+        return "Unauthorized", 403
 
-def auth():
-    return request.headers.get("X-ADMIN-KEY") == ADMIN_KEY
+    return """
+    <html>
+    <body style="background:#111;color:white;font-family:Arial;text-align:center;padding-top:60px;">
+
+        <h1>🔥 ADMIN PANEL</h1>
+
+        <form method="POST" action="/admin/generate">
+            <button style="padding:15px;background:#007acc;color:white;border:none;cursor:pointer;">
+                ⚡ GENERER CLE
+            </button>
+        </form>
+
+        <br><br>
+
+        <form method="POST" action="/admin/generate-hwid">
+            <input name="hwid" placeholder="HWID CLIENT"
+                style="padding:10px;width:300px;" />
+
+            <button style="padding:15px;background:#00c853;color:white;border:none;cursor:pointer;">
+                🔐 GENERER AVEC HWID
+            </button>
+        </form>
+
+    </body>
+    </html>
+    """
 
 # =========================
-# GENERATE (1 CLICK + COPY UI)
+# GENERATE NORMAL
 # =========================
 @app.route("/admin/generate", methods=["POST"])
 def admin_generate():
@@ -105,28 +146,24 @@ def admin_generate():
     <html>
     <body style="background:#111;color:white;font-family:Arial;text-align:center;padding-top:60px;">
 
-        <h2>🔑 LICENCE GENERÉE</h2>
+        <h2>🔑 CLE GENERÉE</h2>
 
         <input id="key" value="{key}" readonly
-            style="padding:10px;width:320px;text-align:center;" />
+            style="padding:10px;width:400px;text-align:center;" />
 
         <br><br>
 
-        <button onclick="copyKey()" 
-            style="padding:10px 20px;background:#00c853;border:none;color:white;cursor:pointer;">
-            📋 COPIER + RETOUR ADMIN
+        <button onclick="copy()"
+            style="padding:10px 20px;background:#00c853;color:white;border:none;">
+            📋 COPIER + RETOUR
         </button>
 
         <script>
-        function copyKey() {{
-            let key = document.getElementById("key");
-            key.select();
-            key.setSelectionRange(0, 99999);
+        function copy() {{
+            let k = document.getElementById("key");
+            k.select();
             document.execCommand("copy");
-
-            setTimeout(() => {{
-                window.location.href = "/admin";
-            }}, 1000);
+            setTimeout(() => window.location.href="/admin", 1000);
         }}
         </script>
 
@@ -135,24 +172,58 @@ def admin_generate():
     """
 
 # =========================
-# ADMIN SIMPLE PAGE
+# GENERATE WITH HWID
 # =========================
-@app.route("/admin")
-def admin():
+@app.route("/admin/generate-hwid", methods=["POST"])
+def admin_generate_hwid():
     if not auth():
         return "Unauthorized", 403
 
-    return """
+    hwid = request.form.get("hwid")
+
+    if not hwid:
+        return "Missing HWID", 400
+
+    key = generate_key()
+    now = int(time.time())
+    expires = now + (30 * 24 * 3600)
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO licenses (key, hwid, active, created_at, expires_at)
+        VALUES (?, ?, ?, ?, ?)
+    """, (key, hwid, 1, now, expires))
+    conn.commit()
+    conn.close()
+
+    return f"""
     <html>
     <body style="background:#111;color:white;font-family:Arial;text-align:center;padding-top:60px;">
 
-        <h1>ADMIN PANEL</h1>
+        <h2>🔐 LICENCE HWID</h2>
 
-        <form method="POST" action="/admin/generate">
-            <button style="padding:15px;background:#007acc;color:white;border:none;cursor:pointer;">
-                ⚡ GENERER UNE CLE
-            </button>
-        </form>
+        <p>HWID :</p>
+        <input value="{hwid}" readonly style="padding:10px;width:400px;" />
+
+        <p>KEY :</p>
+        <input id="key" value="{key}" readonly style="padding:10px;width:400px;" />
+
+        <br><br>
+
+        <button onclick="copy()"
+            style="padding:10px 20px;background:#00c853;color:white;border:none;">
+            📋 COPIER + RETOUR
+        </button>
+
+        <script>
+        function copy() {{
+            let k = document.getElementById("key");
+            k.select();
+            document.execCommand("copy");
+            setTimeout(() => window.location.href="/admin", 1000);
+        }}
+        </script>
 
     </body>
     </html>
