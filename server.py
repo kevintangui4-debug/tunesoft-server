@@ -3,6 +3,7 @@ import sqlite3
 import time
 import os
 import hashlib
+import threading
 
 app = Flask(__name__)
 
@@ -10,14 +11,17 @@ app = Flask(__name__)
 # CONFIG
 # =========================
 ADMIN_KEY = os.environ.get("ADMIN_KEY", "CHANGE_ME")
+DB_FILE = "licenses.db"
+
 
 # =========================
 # DATABASE
 # =========================
 def get_db():
-    conn = sqlite3.connect("licenses.db")
+    conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     return conn
+
 
 def init_db():
     conn = get_db()
@@ -36,7 +40,9 @@ def init_db():
     conn.commit()
     conn.close()
 
+
 init_db()
+
 
 # =========================
 # KEY GENERATOR
@@ -44,11 +50,13 @@ init_db()
 def generate_key():
     return hashlib.sha256(os.urandom(64)).hexdigest()[:20].upper()
 
+
 # =========================
-# AUTH ADMIN
+# ADMIN AUTH
 # =========================
 def auth():
     return request.headers.get("X-ADMIN-KEY") == ADMIN_KEY
+
 
 # =========================
 # HOME
@@ -56,6 +64,7 @@ def auth():
 @app.route("/")
 def home():
     return "TUNESOFT SERVER OK"
+
 
 # =========================
 # CHECK LICENSE (CLIENT)
@@ -85,32 +94,27 @@ def check():
 
     now = time.time()
 
-    # expiration
     if now > expires_at:
         return jsonify({"valid": False, "reason": "expired"})
 
-    # disabled
     if active == 0:
         return jsonify({"valid": False, "reason": "disabled"})
 
-    # first activation (bind HWID)
+    # bind HWID first time
     if db_hwid is None:
         conn = get_db()
         c = conn.cursor()
-        c.execute(
-            "UPDATE licenses SET hwid=? WHERE key=?",
-            (hwid, key)
-        )
+        c.execute("UPDATE licenses SET hwid=? WHERE key=?", (hwid, key))
         conn.commit()
         conn.close()
 
         return jsonify({"valid": True, "first_activation": True})
 
-    # HWID mismatch
     if db_hwid != hwid:
         return jsonify({"valid": False, "reason": "hwid_mismatch"})
 
     return jsonify({"valid": True})
+
 
 # =========================
 # ADMIN PANEL
@@ -136,8 +140,9 @@ def admin():
     </html>
     """
 
+
 # =========================
-# GENERATE KEY
+# GENERATE KEY (1 CLICK)
 # =========================
 @app.route("/admin/generate", methods=["POST"])
 def admin_generate():
@@ -172,7 +177,7 @@ def admin_generate():
 
         <button onclick="copyKey()"
             style="padding:10px 20px;background:#00c853;color:white;border:none;cursor:pointer;">
-            📋 COPIER + RETOUR
+            📋 COPIER + RETOUR ADMIN
         </button>
 
         <script>
@@ -191,8 +196,12 @@ def admin_generate():
     </html>
     """
 
+
 # =========================
-# RUN
+# RUN (RENDER SAFE)
 # =========================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 5000))
+    )
