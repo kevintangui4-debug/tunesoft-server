@@ -17,7 +17,7 @@ def check():
     row = c.fetchone()
     conn.close()
 
-    if not row:
+    if row is None:
         return jsonify({"valid": False, "reason": "invalid_key"})
 
     db_hwid = row["hwid"]
@@ -27,19 +27,19 @@ def check():
     now = time.time()
 
     # =========================
-    # Expiration
+    # Expiration check
     # =========================
     if now > expires_at:
         return jsonify({"valid": False, "reason": "expired"})
 
     # =========================
-    # Désactivé
+    # Disabled check
     # =========================
-    if not active:
+    if active == 0:
         return jsonify({"valid": False, "reason": "disabled"})
 
     # =========================
-    # Première activation (bind HWID)
+    # First activation (bind HWID)
     # =========================
     if db_hwid is None:
         conn = get_db()
@@ -57,7 +57,7 @@ def check():
         })
 
     # =========================
-    # HWID mismatch
+    # HWID check
     # =========================
     if db_hwid != hwid:
         return jsonify({"valid": False, "reason": "hwid_mismatch"})
